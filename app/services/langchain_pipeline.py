@@ -70,33 +70,67 @@ SQL Query:"""
     def create_idea_generation_chain(self):
         """Create a chain for idea generation"""
         idea_prompt = PromptTemplate(
-            input_variables=["context", "requirements", "market_trends"],
-            template="""You are a creative business strategist and innovation consultant.
+            input_variables=["sql_data", "document_data", "web_data", "requirements"],
+            template="""당신은 데이터 기반 비즈니스 전략 컨설턴트입니다.
+기업의 내부 데이터와 시장 트렌드를 종합하여 실행 가능한 비즈니스 아이디어를 제시해주세요.
 
-Internal Data Context:
-{context}
+**중요: 모든 응답은 한국어로 작성해주세요.**
 
-Business Requirements:
-{requirements}
+## 입력 정보
 
-Market Trends (if available):
-{market_trends}
+**사용자 요청**: {requirements}
 
-Based on the above information, generate innovative business ideas that:
-1. Leverage the internal data and capabilities
-2. Address market opportunities
-3. Are feasible and actionable
+**📊 내부 DB 데이터 (NLQ 결과)**:
+{sql_data}
 
-Provide:
-1. **Business Opportunity Overview**
-2. **Specific Service/Product Concepts** (at least 3)
-3. **Target Market and Use Cases**
-4. **Implementation Approach**
-5. **Competitive Advantages**
-6. **Potential Challenges and Mitigation Strategies**
-7. **Expected Impact and ROI**
+**📁 사내 문서 검색 결과 (Vector DB)**:
+{document_data}
 
-Business Ideas:"""
+**🌐 외부 시장 트렌드 (웹 검색)**:
+{web_data}
+
+## 요구사항
+
+다음 구조로 **3개의 구체적인 비즈니스 아이디어**를 한국어로 제시하세요:
+
+### 💡 아이디어 1: [아이디어명]
+
+**📊 데이터 근거**
+- DB 데이터 분석 결과: [SQL 결과에서 발견된 구체적 패턴]
+- 사내 문서 인사이트: [문서에서 발견된 기존 역량/경험]
+- 시장 트렌드 연결: [웹 검색 결과와의 연결점]
+
+**🎯 타겟 고객 & 시장**
+- 구체적인 타겟 고객군
+- 시장 규모 및 성장 가능성
+
+**⚙️ 구현 방안**
+- 기술적 접근 방법
+- 필요한 리소스 및 인프라
+- 단계별 실행 계획 (3단계)
+
+**💰 비즈니스 모델**
+- 수익 구조
+- 예상 ROI 및 타임라인
+
+**🚧 리스크 & 완화방안**
+- 주요 위험 요소 2가지
+- 각각의 대응 전략
+
+### 💡 아이디어 2: [아이디어명]
+[동일한 구조로 반복]
+
+### 💡 아이디어 3: [아이디어명]
+[동일한 구조로 반복]
+
+## 📈 종합 우선순위 및 권장사항
+1. [아이디어명] - 실행 용이성: [높음/중간/낮음], 수익성: [높음/중상/중간/낮음]
+2. [아이디어명] - 실행 용이성: [높음/중간/낮음], 수익성: [높음/중상/중간/낮음]
+3. [아이디어명] - 실행 용이성: [높음/중간/낮음], 수익성: [높음/중상/중간/낮음]
+
+**첫 번째 추진 권장**: [이유와 함께]
+
+비즈니스 아이디어:"""
         )
 
         return LLMChain(llm=self.llm, prompt=idea_prompt)
@@ -194,13 +228,19 @@ Answer:"""
                     # Extract keywords from user request first
                     keyword_prompt = PromptTemplate(
                         input_variables=["request"],
-                        template="""Extract 3-5 key search terms from this business request for web search.
-Focus on technology terms, industry concepts, and market trends.
-Avoid specific company names or internal details.
+                        template="""기업 내부 데이터 기반 비즈니스 아이디어 발굴을 위한 시장 트렌드 검색 키워드를 추출해주세요.
 
-Request: {request}
+사용자 요청: {request}
 
-Keywords (comma-separated):"""
+다음 관점에서 키워드를 추출하세요:
+1. **기술 트렌드**: 관련 신기술, AI, 디지털 트랜스포메이션
+2. **시장 동향**: 산업 동향, 경쟁사 분석, 소비자 트렌드
+3. **비즈니스 모델**: 새로운 수익 모델, 서비스 모델
+4. **규제/정책**: 관련 규제 변화, 정부 정책
+
+회사명이나 구체적인 내부 정보는 제외하고, 일반적인 시장 검색에 유용한 키워드를 추출하세요.
+
+키워드 (영문, 쉼표로 구분):"""
                     )
 
                     keyword_chain = LLMChain(llm=self.llm, prompt=keyword_prompt)
@@ -235,13 +275,16 @@ Keywords (comma-separated):"""
             logger.info("Step 4: Generating business ideas")
             idea_chain = self.create_idea_generation_chain()
 
-            context = self._prepare_context_for_ideas(results)
-            market_trends = results.get("web_insights", {}).get("summary", "No market trends available")
+            # Prepare structured data for each source
+            sql_data_formatted = self._format_sql_data(results.get("sql_data"))
+            document_data_formatted = self._format_document_data(results.get("document_context"))
+            web_data_formatted = self._format_web_data(results.get("web_insights"))
 
             generated = await idea_chain.ainvoke({
-                "context": context,
-                "requirements": user_request,
-                "market_trends": market_trends
+                "sql_data": sql_data_formatted,
+                "document_data": document_data_formatted,
+                "web_data": web_data_formatted,
+                "requirements": user_request
             })
 
             results["generated_ideas"] = generated["text"]
@@ -309,6 +352,66 @@ Web Search Query:"""
                 context_parts.append(doc["content"])
 
         return "\n\n".join(context_parts) if context_parts else "Limited internal data available"
+
+    def _format_sql_data(self, sql_data: dict) -> str:
+        """Format SQL data for idea generation prompt"""
+        if not sql_data or not sql_data.get("data"):
+            return "내부 DB 데이터가 없습니다."
+
+        formatted = f"실행된 쿼리: {sql_data.get('query', 'N/A')}\n"
+        formatted += f"사용된 테이블: {', '.join(sql_data.get('tables', []))}\n\n"
+        formatted += "주요 데이터 패턴:\n"
+
+        data = sql_data.get("data", [])[:5]  # 상위 5개 행만 표시
+        for i, row in enumerate(data, 1):
+            formatted += f"{i}. "
+            row_items = []
+            for key, value in row.items():
+                row_items.append(f"{key}: {value}")
+            formatted += ", ".join(row_items) + "\n"
+
+        if len(sql_data.get("data", [])) > 5:
+            formatted += f"... 총 {len(sql_data.get('data', []))}개 레코드 중 상위 5개만 표시"
+
+        return formatted
+
+    def _format_document_data(self, document_data: list) -> str:
+        """Format document data for idea generation prompt"""
+        if not document_data:
+            return "검색된 사내 문서가 없습니다."
+
+        formatted = "관련 사내 문서 요약:\n\n"
+        for i, doc in enumerate(document_data[:3], 1):  # 상위 3개 문서만
+            formatted += f"{i}. 문서 내용: {doc.get('content', '')[:200]}...\n"
+            metadata = doc.get('metadata', {})
+            if 'source' in metadata:
+                formatted += f"   출처: {metadata['source']}\n"
+            formatted += "\n"
+
+        return formatted
+
+    def _format_web_data(self, web_data: dict) -> str:
+        """Format web search data for idea generation prompt"""
+        if not web_data:
+            return "외부 시장 트렌드 정보가 없습니다."
+
+        formatted = f"검색 키워드: {web_data.get('query', 'N/A')}\n\n"
+
+        # 검색 결과 요약
+        results = web_data.get('results', [])
+        if results:
+            formatted += "주요 검색 결과:\n"
+            for i, result in enumerate(results[:3], 1):  # 상위 3개 결과
+                formatted += f"{i}. {result.get('title', '제목 없음')}\n"
+                formatted += f"   출처: {result.get('source', '출처 불명')}\n"
+                formatted += f"   내용: {result.get('snippet', '')[:150]}...\n\n"
+
+        # AI 요약 정보
+        if 'summary' in web_data:
+            formatted += "시장 트렌드 요약:\n"
+            formatted += web_data['summary'][:500] + "..."
+
+        return formatted
 
     async def answer_question(self, question: str, store_names: Optional[List[str]] = None) -> str:
         """Answer a question using RAG"""
