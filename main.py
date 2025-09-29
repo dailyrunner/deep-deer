@@ -39,13 +39,11 @@ async def lifespan(app: FastAPI):
 
     # Initialize LLM service with configured providers
     llm_config = {
-        "enable_ollama": settings.llm_provider == "ollama" or True,
-        "enable_huggingface_hub": settings.llm_provider == "huggingface_hub",
-        "enable_huggingface_local": settings.llm_provider == "huggingface_local",
+        "enable_ollama": settings.llm_provider == "ollama" or (not settings.enable_huggingface_local),
+        "enable_huggingface_local": settings.llm_provider == "huggingface_local" or settings.enable_huggingface_local,
         "ollama_model": settings.ollama_model,
         "ollama_base_url": settings.ollama_base_url,
         "huggingface_token": settings.huggingface_token,
-        "huggingface_model": settings.huggingface_model,
         "huggingface_local_model": settings.huggingface_local_model
     }
     await llm_service.initialize(llm_config)

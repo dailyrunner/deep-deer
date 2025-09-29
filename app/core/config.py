@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     )
 
     # LLM settings
-    llm_provider: str = Field(default="ollama", env="LLM_PROVIDER")  # ollama, huggingface_hub, huggingface_local
+    llm_provider: str = Field(default="ollama", env="LLM_PROVIDER")  # ollama or huggingface_local
 
     # Ollama settings
     ollama_base_url: str = Field(
@@ -38,10 +38,10 @@ class Settings(BaseSettings):
     )
     ollama_timeout: int = Field(default=300, env="OLLAMA_TIMEOUT")
 
-    # HuggingFace settings
-    huggingface_token: Optional[str] = Field(default=None, env="HUGGINGFACE_TOKEN")
-    huggingface_model: str = Field(default="google/flan-t5-large", env="HUGGINGFACE_MODEL")
-    huggingface_local_model: str = Field(default="gpt2", env="HUGGINGFACE_LOCAL_MODEL")
+    # HuggingFace Local settings
+    huggingface_token: Optional[str] = Field(default=None, env="HUGGINGFACE_TOKEN")  # For downloading models
+    huggingface_local_model: str = Field(default="Qwen/Qwen3-0.6B", env="HUGGINGFACE_LOCAL_MODEL")  # Can be any HF model
+    enable_huggingface_local: bool = Field(default=False, env="ENABLE_HUGGINGFACE_LOCAL")
 
     # Vector store settings
     vector_store_path: str = Field(
@@ -59,6 +59,8 @@ class Settings(BaseSettings):
         default="BAAI/bge-m3",
         env="EMBEDDING_MODEL"
     )
+    # Enable lazy loading for embeddings (useful for large models like E5)
+    enable_lazy_loading: bool = Field(default=False, env="ENABLE_LAZY_LOADING")
 
     chunk_size: int = Field(default=1000, env="CHUNK_SIZE")
     chunk_overlap: int = Field(default=100, env="CHUNK_OVERLAP")

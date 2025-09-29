@@ -28,13 +28,34 @@ class LangChainPipeline:
     async def initialize(self):
         """Initialize LangChain components"""
         try:
-            # Initialize Ollama LLM
-            self.llm = Ollama(
-                base_url=settings.ollama_base_url,
-                model=settings.ollama_model,
-                temperature=0.7,
-                num_predict=2000
-            )
+            from app.services.llm_provider import llm_service
+
+            # Try to use llm_service if it's initialized
+            if llm_service.is_ready and llm_service.default_provider:
+                provider = llm_service.providers.get(llm_service.default_provider)
+
+                # Use the provider's LLM if available
+                if provider and hasattr(provider, 'llm') and provider.llm:
+                    self.llm = provider.llm
+                    logger.info(f"Using {llm_service.default_provider} provider for LangChain pipeline")
+                else:
+                    # Fallback to Ollama
+                    self.llm = Ollama(
+                        base_url=settings.ollama_base_url,
+                        model=settings.ollama_model,
+                        temperature=0.7,
+                        num_predict=2000
+                    )
+                    logger.info("Using Ollama as fallback for LangChain pipeline")
+            else:
+                # Default to Ollama if llm_service is not ready
+                self.llm = Ollama(
+                    base_url=settings.ollama_base_url,
+                    model=settings.ollama_model,
+                    temperature=0.7,
+                    num_predict=2000
+                )
+                logger.info("Using default Ollama for LangChain pipeline")
 
             # Initialize embeddings
             embedding_service.initialize()

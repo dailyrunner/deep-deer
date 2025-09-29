@@ -3,9 +3,10 @@ import logging
 from typing import Optional, Dict, Any, List
 from abc import ABC, abstractmethod
 from enum import Enum
+import torch
 
-from langchain_community.llms import Ollama, HuggingFaceHub
-from langchain_community.llms.huggingface_pipeline import HuggingFacePipeline
+from langchain_community.llms import Ollama
+from langchain_huggingface import HuggingFacePipeline
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
@@ -18,7 +19,6 @@ logger = logging.getLogger(__name__)
 class ModelProvider(str, Enum):
     """Available model providers"""
     OLLAMA = "ollama"
-    HUGGINGFACE_HUB = "huggingface_hub"
     HUGGINGFACE_LOCAL = "huggingface_local"
 
 
@@ -112,73 +112,13 @@ class OllamaProvider(BaseLLMProvider):
         self.is_ready = False
 
 
-class HuggingFaceHubProvider(BaseLLMProvider):
-    """HuggingFace Hub API provider"""
-
-    def __init__(self, model_name: str = None, api_token: str = None):
-        self.model_name = model_name or "gpt2"
-        self.api_token = api_token or settings.huggingface_token
-        self.llm = None
-        self.is_ready = False
-
-    async def initialize(self) -> bool:
-        """Initialize HuggingFace Hub provider"""
-        try:
-            if not self.api_token:
-                logger.error("HuggingFace API token not provided")
-                return False
-
-            self.llm = HuggingFaceHub(
-                repo_id=self.model_name,
-                huggingfacehub_api_token=self.api_token,
-                model_kwargs={
-                    "temperature": 0.7,
-                    "max_length": 2000
-                }
-            )
-
-            logger.info(f"HuggingFace Hub provider initialized with model: {self.model_name}")
-            self.is_ready = True
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to initialize HuggingFace Hub provider: {e}")
-            self.is_ready = False
-            return False
-
-    async def generate(
-        self,
-        prompt: str,
-        temperature: float = 0.7,
-        max_tokens: int = 2000,
-        **kwargs
-    ) -> str:
-        """Generate text using HuggingFace Hub"""
-        if not self.is_ready:
-            raise RuntimeError("HuggingFace Hub provider is not ready")
-
-        # Update model kwargs
-        self.llm.model_kwargs["temperature"] = temperature
-        self.llm.model_kwargs["max_length"] = max_tokens
-
-        try:
-            response = self.llm.invoke(prompt)
-            return response
-        except Exception as e:
-            logger.error(f"HuggingFace Hub generation error: {e}")
-            raise
-
-    async def cleanup(self):
-        """Cleanup HuggingFace Hub resources"""
-        self.llm = None
-        self.is_ready = False
-
 
 class HuggingFaceLocalProvider(BaseLLMProvider):
-    """Local HuggingFace model provider"""
+    """Local HuggingFace model provider with support for various models including Qwen"""
 
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: str = None, token: str = None):
         self.model_name = model_name or "gpt2"
+        self.token = token  # HuggingFace token for gated models
         self.llm = None
         self.tokenizer = None
         self.model = None
@@ -187,20 +127,67 @@ class HuggingFaceLocalProvider(BaseLLMProvider):
     async def initialize(self) -> bool:
         """Initialize local HuggingFace model"""
         try:
+            import os
+            from pathlib import Path
+
+            # Get actual cache directory
+            cache_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+            hub_cache = os.path.join(cache_dir, "hub")
+            model_cache_name = f"models--{self.model_name.replace('/', '--')}"
+
             logger.info(f"Loading local HuggingFace model: {self.model_name}")
+            logger.info(f"Model cache directory: {hub_cache}")
 
-            # Load tokenizer and model
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self.model = AutoModelForCausalLM.from_pretrained(self.model_name)
+            # Check if model already cached
+            model_cache_path = Path(hub_cache) / model_cache_name
+            if model_cache_path.exists():
+                logger.info(f"Model found in cache: {model_cache_path}")
+            else:
+                logger.info(f"Model not in cache, will download to: {model_cache_path}")
 
-            # Create pipeline
+            # Set HuggingFace token if provided (for gated models)
+            if self.token:
+                os.environ["HF_TOKEN"] = self.token
+                logger.info("HuggingFace token configured for gated model access")
+
+            # Load tokenizer and model with trust_remote_code for models like Qwen
+            logger.info(f"Loading tokenizer for {self.model_name}...")
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                trust_remote_code=True,
+                token=self.token  # Pass token for authentication
+            )
+            logger.info("Tokenizer loaded successfully")
+
+            # Determine device and dtype
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+            logger.info(f"Loading model {self.model_name} (this may take time on first run)...")
+            logger.info(f"Using device: {device}, dtype: {dtype}")
+
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                trust_remote_code=True,
+                torch_dtype=dtype,
+                device_map="auto" if torch.cuda.is_available() else None,
+                token=self.token  # Pass token for authentication
+            )
+            logger.info("Model loaded successfully")
+
+            if not torch.cuda.is_available():
+                self.model = self.model.to("cpu")
+
+            # Create pipeline with proper token IDs
             pipe = pipeline(
                 "text-generation",
                 model=self.model,
                 tokenizer=self.tokenizer,
-                max_length=2000,
+                max_new_tokens=2000,
                 temperature=0.7,
-                do_sample=True
+                do_sample=True,
+                pad_token_id=self.tokenizer.eos_token_id or self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id
             )
 
             # Create LangChain wrapper
@@ -229,7 +216,7 @@ class HuggingFaceLocalProvider(BaseLLMProvider):
         try:
             # Update pipeline parameters
             self.llm.pipeline.model_kwargs["temperature"] = temperature
-            self.llm.pipeline.model_kwargs["max_length"] = max_tokens
+            self.llm.pipeline.model_kwargs["max_new_tokens"] = max_tokens
 
             response = self.llm.invoke(prompt)
             return response
@@ -256,8 +243,6 @@ class LLMProviderFactory:
         """Create an LLM provider instance"""
         if provider_type == ModelProvider.OLLAMA:
             return OllamaProvider(**kwargs)
-        elif provider_type == ModelProvider.HUGGINGFACE_HUB:
-            return HuggingFaceHubProvider(**kwargs)
         elif provider_type == ModelProvider.HUGGINGFACE_LOCAL:
             return HuggingFaceLocalProvider(**kwargs)
         else:
@@ -288,23 +273,12 @@ class LLMService:
                 if not self.default_provider:
                     self.default_provider = "ollama"
 
-        # Initialize HuggingFace Hub if configured
-        if config.get("enable_huggingface_hub", False):
-            hf_hub_provider = LLMProviderFactory.create_provider(
-                ModelProvider.HUGGINGFACE_HUB,
-                model_name=config.get("huggingface_model"),
-                api_token=config.get("huggingface_token")
-            )
-            if await hf_hub_provider.initialize():
-                self.providers["huggingface_hub"] = hf_hub_provider
-                if not self.default_provider:
-                    self.default_provider = "huggingface_hub"
-
         # Initialize local HuggingFace if configured
         if config.get("enable_huggingface_local", False):
             hf_local_provider = LLMProviderFactory.create_provider(
                 ModelProvider.HUGGINGFACE_LOCAL,
-                model_name=config.get("huggingface_local_model", "gpt2")
+                model_name=config.get("huggingface_local_model", settings.huggingface_local_model),
+                token=config.get("huggingface_token", settings.huggingface_token)
             )
             if await hf_local_provider.initialize():
                 self.providers["huggingface_local"] = hf_local_provider
@@ -366,6 +340,9 @@ class LLMService:
         )
 
         # Create and run chain
+        if not hasattr(provider_instance, 'llm') or provider_instance.llm is None:
+            raise RuntimeError(f"Provider {provider_name} does not have a LangChain-compatible LLM")
+
         chain = LLMChain(llm=provider_instance.llm, prompt=prompt)
         result = await chain.ainvoke(input_variables)
         return result["text"]
