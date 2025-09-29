@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6" data-results>
     <!-- Success Message -->
     <div class="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center space-x-3">
       <div class="flex-shrink-0">
@@ -32,14 +32,20 @@
         </div>
       </div>
 
-      <!-- Content -->
+      <!-- Content with Markdown Rendering -->
       <div class="p-6">
-        <div class="prose prose-sm max-w-none">
-          <div
-            v-html="formattedIdeas"
-            class="text-gray-700 leading-relaxed whitespace-pre-wrap"
-          ></div>
-        </div>
+        <div
+          class="markdown-content prose prose-sm max-w-none
+                 prose-headings:text-gray-900 prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg
+                 prose-p:text-gray-700 prose-p:leading-relaxed
+                 prose-strong:text-gray-900 prose-strong:font-semibold
+                 prose-ul:my-4 prose-li:my-1
+                 prose-ol:my-4
+                 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic
+                 prose-code:bg-gray-100 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm
+                 prose-pre:bg-gray-900 prose-pre:text-gray-100"
+          v-html="formattedIdeas"
+        ></div>
       </div>
 
       <!-- Footer Actions -->
@@ -53,7 +59,7 @@
               <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
               <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
             </svg>
-            <span>복사하기</span>
+            <span>{{ copied ? '복사됨!' : '복사하기' }}</span>
           </button>
 
           <button
@@ -92,7 +98,10 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, onMounted } from 'vue'
+import { marked } from 'marked'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/github-dark.css'
 
 const props = defineProps({
   ideas: {
@@ -102,58 +111,187 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['generateAnother'])
+const copied = ref(false)
+
+// Configure marked with syntax highlighting
+onMounted(() => {
+  marked.setOptions({
+    breaks: true,
+    gfm: true,
+    headerIds: false,
+    highlight: function(code, lang) {
+      if (lang && hljs.getLanguage(lang)) {
+        try {
+          return hljs.highlight(code, { language: lang }).value
+        } catch (err) {
+          console.error('Highlight error:', err)
+        }
+      }
+      return hljs.highlightAuto(code).value
+    }
+  })
+})
 
 const formattedIdeas = computed(() => {
-  let formatted = props.ideas
+  try {
+    // Parse markdown content
+    let html = marked.parse(props.ideas)
 
-  // Add basic formatting for better readability
-  formatted = formatted
-    .replace(/### (.*)/g, '<h3 class="text-lg font-bold text-gray-900 mt-6 mb-3">$1</h3>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-gray-900">$1</strong>')
-    .replace(/💡|📊|🎯|⚙️|💰|🚧|📈/g, '<span class="text-lg">$&</span>')
-    .replace(/\n\n/g, '<br><br>')
-    .replace(/\n/g, '<br>')
+    // Add custom styling for specific elements
+    html = html
+      // Style emoji icons
+      .replace(/(💡|📊|🎯|⚙️|💰|🚧|📈|🔍|📱|🏢|🚀|✨|📝|🔧|🛠️|🎨|📌|⭐|🔑|💼|📦|🌐|🔒|⚡|🎖️|🏆|💎)/g,
+        '<span class="inline-block text-xl align-middle mr-1">$1</span>')
+      // Style numbered lists
+      .replace(/<ol>/g, '<ol class="list-decimal list-inside space-y-2">')
+      // Style bullet lists
+      .replace(/<ul>/g, '<ul class="list-disc list-inside space-y-2">')
+      // Add spacing to paragraphs
+      .replace(/<p>/g, '<p class="mb-4">')
+      // Style headers
+      .replace(/<h1>/g, '<h1 class="text-2xl font-bold text-gray-900 mt-6 mb-4">')
+      .replace(/<h2>/g, '<h2 class="text-xl font-bold text-gray-900 mt-6 mb-3">')
+      .replace(/<h3>/g, '<h3 class="text-lg font-semibold text-gray-900 mt-4 mb-2">')
+      .replace(/<h4>/g, '<h4 class="text-base font-semibold text-gray-800 mt-3 mb-2">')
+      // Style blockquotes
+      .replace(/<blockquote>/g, '<blockquote class="border-l-4 border-blue-500 pl-4 my-4 italic text-gray-700">')
+      // Style tables
+      .replace(/<table>/g, '<table class="min-w-full divide-y divide-gray-200 my-4">')
+      .replace(/<thead>/g, '<thead class="bg-gray-50">')
+      .replace(/<th>/g, '<th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">')
+      .replace(/<td>/g, '<td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700">')
+      // Style horizontal rules
+      .replace(/<hr>/g, '<hr class="my-6 border-t border-gray-300">')
 
-  return formatted
+    return html
+  } catch (error) {
+    console.error('Markdown parsing error:', error)
+    // Fallback to basic formatting
+    return props.ideas
+      .replace(/\n/g, '<br>')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+  }
 })
 
 const copyToClipboard = async () => {
   try {
     await navigator.clipboard.writeText(props.ideas)
-    // You could show a toast notification here
-    console.log('아이디어가 클립보드에 복사되었습니다!')
+    copied.value = true
+    setTimeout(() => {
+      copied.value = false
+    }, 2000)
   } catch (err) {
     console.error('복사 실패:', err)
+    alert('클립보드 복사에 실패했습니다.')
   }
 }
 
 const exportToPdf = () => {
-  // Basic PDF export implementation
   const printWindow = window.open('', '_blank')
+  const htmlContent = marked.parse(props.ideas)
+
   printWindow.document.write(`
     <!DOCTYPE html>
     <html>
     <head>
       <title>Deep Deer - 비즈니스 아이디어</title>
       <style>
-        body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }
-        h1 { color: #2563eb; }
-        h3 { color: #1f2937; margin-top: 20px; }
-        .header { text-align: center; margin-bottom: 30px; }
-        .content { white-space: pre-wrap; }
+        @page { margin: 2cm; }
+        body {
+          font-family: 'Noto Sans KR', Arial, sans-serif;
+          padding: 20px;
+          line-height: 1.8;
+          color: #1f2937;
+        }
+        h1 {
+          color: #2563eb;
+          font-size: 28px;
+          margin-top: 24px;
+          margin-bottom: 16px;
+        }
+        h2 {
+          color: #1e40af;
+          font-size: 22px;
+          margin-top: 20px;
+          margin-bottom: 12px;
+        }
+        h3 {
+          color: #1f2937;
+          font-size: 18px;
+          margin-top: 16px;
+          margin-bottom: 8px;
+        }
+        .header {
+          text-align: center;
+          margin-bottom: 40px;
+          padding-bottom: 20px;
+          border-bottom: 2px solid #e5e7eb;
+        }
+        .content {
+          max-width: 800px;
+          margin: 0 auto;
+        }
+        ul, ol {
+          margin: 12px 0;
+          padding-left: 24px;
+        }
+        li {
+          margin: 8px 0;
+        }
+        blockquote {
+          border-left: 4px solid #3b82f6;
+          padding-left: 16px;
+          margin: 16px 0;
+          font-style: italic;
+          color: #4b5563;
+        }
+        code {
+          background: #f3f4f6;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: 'Courier New', monospace;
+          font-size: 14px;
+        }
+        pre {
+          background: #1f2937;
+          color: #f9fafb;
+          padding: 16px;
+          border-radius: 8px;
+          overflow-x: auto;
+        }
+        strong {
+          font-weight: 600;
+          color: #111827;
+        }
+        .footer {
+          margin-top: 40px;
+          padding-top: 20px;
+          border-top: 1px solid #e5e7eb;
+          text-align: center;
+          color: #6b7280;
+          font-size: 12px;
+        }
       </style>
     </head>
     <body>
       <div class="header">
         <h1>🦌 Deep Deer</h1>
-        <p>데이터 기반 비즈니스 아이디어</p>
+        <p style="color: #4b5563;">데이터 기반 비즈니스 아이디어 생성 플랫폼</p>
+        <p style="color: #9ca3af; font-size: 14px;">생성일: ${new Date().toLocaleDateString('ko-KR')}</p>
       </div>
-      <div class="content">${props.ideas}</div>
+      <div class="content">${htmlContent}</div>
+      <div class="footer">
+        <p>Generated by Deep Deer - AI-Powered Business Idea Platform</p>
+      </div>
     </body>
     </html>
   `)
   printWindow.document.close()
-  printWindow.print()
+
+  // Wait for content to load before printing
+  printWindow.onload = () => {
+    printWindow.print()
+  }
 }
 
 const shareResults = async () => {
@@ -165,7 +303,10 @@ const shareResults = async () => {
         url: window.location.href
       })
     } catch (err) {
-      console.log('공유가 취소되었습니다.')
+      if (err.name !== 'AbortError') {
+        console.error('공유 실패:', err)
+        await copyToClipboard()
+      }
     }
   } else {
     // Fallback to copy to clipboard
@@ -173,3 +314,36 @@ const shareResults = async () => {
   }
 }
 </script>
+
+<style scoped>
+/* Additional custom styles for markdown content */
+.markdown-content :deep(pre) {
+  @apply rounded-lg overflow-x-auto my-4;
+}
+
+.markdown-content :deep(code) {
+  @apply font-mono text-sm;
+}
+
+.markdown-content :deep(table) {
+  @apply border-collapse w-full my-4;
+}
+
+.markdown-content :deep(th) {
+  @apply bg-gray-100 font-semibold;
+}
+
+.markdown-content :deep(td),
+.markdown-content :deep(th) {
+  @apply border border-gray-300 px-4 py-2;
+}
+
+.markdown-content :deep(tr:nth-child(even)) {
+  @apply bg-gray-50;
+}
+
+/* Card gradient background */
+.card-gradient {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+</style>
