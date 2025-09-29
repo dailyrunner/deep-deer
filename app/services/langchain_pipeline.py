@@ -259,14 +259,27 @@ Answer:"""
 3. **비즈니스 모델**: 새로운 수익 모델, 서비스 모델
 4. **규제/정책**: 관련 규제 변화, 정부 정책
 
-회사명이나 구체적인 내부 정보는 제외하고, 일반적인 시장 검색에 유용한 키워드를 추출하세요.
+중요:
+- 가장 핵심적인 키워드 3-5개만 선택
+- 각 키워드는 2-3단어 이내
+- 회사명이나 구체적인 내부 정보는 제외
 
-키워드 (영문, 쉼표로 구분):"""
+키워드 (영문, 쉼표로 구분, 최대 5개):"""
                     )
 
                     keyword_chain = LLMChain(llm=self.llm, prompt=keyword_prompt)
                     keyword_result = await keyword_chain.ainvoke({"request": user_request})
                     search_keywords = keyword_result["text"].strip()
+
+                    # Limit keywords to prevent URI too long error
+                    keywords_list = [k.strip() for k in search_keywords.split(',')][:5]  # Max 5 keywords
+                    search_keywords = ', '.join(keywords_list)
+
+                    # Further limit total length
+                    if len(search_keywords) > 200:
+                        # Take only first 3 keywords if still too long
+                        keywords_list = keywords_list[:3]
+                        search_keywords = ', '.join(keywords_list)
 
                     logger.info(f"Extracted search keywords: {search_keywords}")
 
